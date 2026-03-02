@@ -8,8 +8,22 @@ require __DIR__ . '/../App/bootstrap.php';
 
 $app = AppFactory::create();
 
-$app->addRoutingMiddleware();
-$app->setBasePath('/verificaasorpresa');
+// Middleware per il CORS
+$app->add(function ($request, $handler) {
+    $response = $handler->handle($request); // Passa la richiesta alla giusta rotta e prende la risposta
+    return $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+});
+
+// Gestione delle richieste OPTIONS (pre-flight), richieste di prova inviate dal browser prima di inviare quella vera e propria
+$app->options('/{routes:.+}', function ($request, $response, $args) {
+    return $response;
+});
+
+$app->addRoutingMiddleware(); // Importa il Router originale di Slim che analizza l'URL richiesto e cerca una rotta corrispondente
+$app->setBasePath('/esercizioFornitoriSlim');
 
 $app->addErrorMiddleware(true, true, true);
 
@@ -41,10 +55,17 @@ $queries = [
     10 => "SELECT pid FROM Catalogo GROUP BY pid HAVING COUNT(DISTINCT fid) >= 2"
 ];
 
+$app->get('/', function (Request $request, Response $response) {
+    // Restituisce una risposta che reindirizza a /api con codice stato 302 (temporaneo)
+    return $response
+        ->withHeader('Location', '/esercizioFornitoriSlim/api')
+        ->withStatus(302);
+});
+
 $app->get('/api', function (Request $request, Response $response) use ($queries){
     $endpoints = [];
     foreach ($queries as $id => $sql) {
-        $endpoints["query_$id"] = "api/$id";
+        $endpoints["query_$id"] = "api/" . $id;
     }
 
     $payload = [
@@ -65,17 +86,38 @@ $app->get('/api/{id}', function (Request $request, Response $response, array $ar
             "error" => "Query not found. Please insert an ID between 1 and 10"
         ];
 
-        $response->getBody()->write(json_encode($payload, JSON_PRETTY_PRINT));
+        $response->getBody()->write(json_encode($errorPayload, JSON_PRETTY_PRINT));
         return $response->withHeader('Content-Type', 'application/json')->withStatus(404);
     }
 
-    $sql = $queries[$id];
+    $params = $request->getQueryParams(); // legge le query string
+
+    // Preparazione dei parametri per la paginazione
+    $page = isset($params['page']) ? (int)$params['page'] : 1;
+    $limit = isset($params['limit']) ? (int)$params['limit'] : 10;
+    $offset = ($page - 1) * $limit;
 
     try {
-        $stmt = $pdo->query($sql);
+        $sqlConteggio = "SELECT COUNT(*) as totale FROM ($queries[$id]) as subquery";
+        $stmtConteggio = $pdo->query($sqlConteggio);
+        $totalRecords = $stmtConteggio->fetchColumn(); // restituisce direttamente il valore contenuto nella prima colonna senza metterlo nell'oggetto o nell'array
+
+        $sql = $queries[$id] . " LIMIT :limit OFFSET :offset";
+        $stmt = $pdo->prepare($sql);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $data = $stmt->fetchAll();
+
         $result = [
             "success" => true,
-            "data" => $stmt->fetchAll()
+            "pagination" => [
+                "total_records" => $totalRecords,
+                "current_page" => $page,
+                "limit" => $limit
+            ],
+            "data" => $data
         ];
     } catch (PDOException $e) {
         $result = [
