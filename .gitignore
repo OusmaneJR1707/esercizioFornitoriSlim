@@ -1,0 +1,17 @@
+# --- Dipendenze e Core ---
+/vendor/
+
+# --- Configurazioni Sensibili ---
+/App/Config/config.php
+
+# --- File di Ambiente e Logs ---
+.env
+*.log
+
+# --- Sistema Operativo e IDE ---
+.DS_Store
+Thumbs.db
+
+# Configurazioni degli editor (VS Code, PHPStorm)
+.vscode/
+.idea/
