@@ -58,7 +58,7 @@ $queries = [
 $app->get('/', function (Request $request, Response $response) {
     // Restituisce una risposta che reindirizza a /api con codice stato 302 (temporaneo)
     return $response
-        ->withHeader('Location', '/esercizioFornitoriSlim/api')
+        ->withHeader('Location', '/esercizioFornitoriSlim/backend/api')
         ->withStatus(302);
 });
 

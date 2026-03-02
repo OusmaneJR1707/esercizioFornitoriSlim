@@ -8,5 +8,5 @@
     RewriteRule ^frontend/(.*)$ frontend/public/$1 [L]
     
     # Redirect automatico della root alla dashboard del frontend
-    RewriteRule ^$ /esercizioFornitoriSlim/frontend/public/dashboard [R=301,L]
+    RewriteRule ^$ /esercizioFornitoriSlim/frontend/public/homepage [R=301,L]
 </IfModule>
