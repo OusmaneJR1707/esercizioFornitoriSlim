@@ -43,12 +43,12 @@ try {
 }
 
 $queries = [
-    1 => "SELECT DISTINCT p.pnome FROM Pezzi p JOIN Catalogo c ON p.pid = c.pid",
-    2 => "SELECT f.fnome FROM Fornitori f WHERE NOT EXISTS (SELECT * FROM Pezzi p WHERE NOT EXISTS (SELECT * FROM Catalogo c WHERE c.fid = f.fid AND c.pid = p.pid))",
-    3 => "SELECT f.fnome FROM Fornitori f WHERE NOT EXISTS (SELECT * FROM Pezzi p WHERE p.colore = 'rosso' AND NOT EXISTS (SELECT * FROM Catalogo c WHERE c.fid = f.fid AND c.pid = p.pid))",
-    4 => "SELECT p.pnome FROM Pezzi p JOIN Catalogo c ON p.pid = c.pid JOIN Fornitori f ON c.fid = f.fid WHERE f.fnome = 'Acme' AND p.pid NOT IN (SELECT c2.pid FROM Catalogo c2 JOIN Fornitori f2 ON c2.fid = f2.fid WHERE f2.fnome != 'Acme')",
+    1 => "SELECT DISTINCT p.pid, p.pnome FROM Pezzi p JOIN Catalogo c ON p.pid = c.pid",
+    2 => "SELECT f.fid, f.fnome FROM Fornitori f WHERE NOT EXISTS (SELECT * FROM Pezzi p WHERE NOT EXISTS (SELECT * FROM Catalogo c WHERE c.fid = f.fid AND c.pid = p.pid))",
+    3 => "SELECT f.fid, f.fnome FROM Fornitori f WHERE NOT EXISTS (SELECT * FROM Pezzi p WHERE p.colore = 'rosso' AND NOT EXISTS (SELECT * FROM Catalogo c WHERE c.fid = f.fid AND c.pid = p.pid))",
+    4 => "SELECT p.pid, p.pnome FROM Pezzi p JOIN Catalogo c ON p.pid = c.pid JOIN Fornitori f ON c.fid = f.fid WHERE f.fnome = 'Acme' AND p.pid NOT IN (SELECT c2.pid FROM Catalogo c2 JOIN Fornitori f2 ON c2.fid = f2.fid WHERE f2.fnome != 'Acme')",
     5 => "SELECT DISTINCT c1.fid FROM Catalogo c1 WHERE c1.costo > (SELECT AVG(c2.costo) FROM Catalogo c2 WHERE c2.pid = c1.pid)",
-    6 => "SELECT c1.pid, f.fnome FROM Catalogo c1 JOIN Fornitori f ON c1.fid = f.fid WHERE c1.costo = (SELECT MAX(c2.costo) FROM Catalogo c2 WHERE c2.pid = c1.pid)",
+    6 => "SELECT c1.pid, c1.fid, f.fnome FROM Catalogo c1 JOIN Fornitori f ON c1.fid = f.fid WHERE c1.costo = (SELECT MAX(c2.costo) FROM Catalogo c2 WHERE c2.pid = c1.pid)",
     7 => "SELECT DISTINCT fid FROM Catalogo WHERE fid NOT IN (SELECT c.fid FROM Catalogo c JOIN Pezzi p ON c.pid = p.pid WHERE p.colore != 'rosso')",
     8 => "SELECT DISTINCT c1.fid FROM Catalogo c1 JOIN Pezzi p1 ON c1.pid = p1.pid WHERE p1.colore = 'rosso' AND c1.fid IN (SELECT c2.fid FROM Catalogo c2 JOIN Pezzi p2 ON c2.pid = p2.pid WHERE p2.colore = 'verde')",
     9 => "SELECT DISTINCT c.fid FROM Catalogo c JOIN Pezzi p ON c.pid = p.pid WHERE p.colore IN ('rosso', 'verde')",
@@ -128,6 +128,26 @@ $app->get('/api/{id}', function (Request $request, Response $response, array $ar
 
     $response->getBody()->write(json_encode($result, JSON_PRETTY_PRINT));
     return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
+});
+
+$app->get('/api/product/{id}', function ($request, $response, $args) use ($pdo) {
+    $stmt = $pdo->prepare("SELECT * FROM pezzi WHERE pid = :id");
+    $stmt->execute(['id' => $args['id']]);
+    $data = $stmt->fetch();
+
+    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Product not found"];
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/supplier/{id}', function ($request, $response, $args) use ($pdo) {
+    $stmt = $pdo->prepare("SELECT * FROM fornitori WHERE fid = :id");
+    $stmt->execute(['id' => $args['id']]);
+    $data = $stmt->fetch();
+    
+    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Fornitore non trovato"];
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
 });
 
 $app->run();
