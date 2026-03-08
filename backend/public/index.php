@@ -22,6 +22,8 @@ $app->options('/{routes:.+}', function ($request, $response, $args) {
     return $response;
 });
 
+$app->addBodyParsingMiddleware(); // permette a Slim di leggere i dati PUT e i JSON
+
 $app->addRoutingMiddleware(); // Importa il Router originale di Slim che analizza l'URL richiesto e cerca una rotta corrispondente
 $app->setBasePath('/esercizioFornitoriSlim/backend');
 
@@ -77,6 +79,216 @@ $app->get('/api', function (Request $request, Response $response) use ($queries)
     return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
 });
 
+$app->get('/api/catalogo', function ($request, $response) use ($pdo) {
+    // Leggiamo un eventuale parametro 'fid' dalla query string (?fid=101)
+    $fid = $request->getQueryParams()['fid'] ?? null;
+
+    if ($fid) {
+        // Query per il FORNITORE: vede solo i suoi pezzi
+        $stmt = $pdo->prepare("
+            SELECT c.pid, p.pnome, p.colore, c.costo 
+            FROM catalogo c 
+            JOIN pezzi p ON c.pid = p.pid 
+            WHERE c.fid = ?
+        ");
+        $stmt->execute([$fid]);
+    } else {
+        // Query per l'ADMIN: vede tutto
+        $stmt = $pdo->query("
+            SELECT c.fid, f.fnome, c.pid, p.pnome, c.costo 
+            FROM catalogo c 
+            JOIN fornitori f ON c.fid = f.fid
+            JOIN pezzi p ON c.pid = p.pid
+        ");
+    }
+    
+    $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $response->getBody()->write(json_encode(["success" => true, "data" => $data]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// --- INSERISCI (POST) ---
+$app->post('/api/catalogo', function ($request, $response) use ($pdo) {
+    $data = $request->getParsedBody();
+    $stmt = $pdo->prepare("INSERT INTO catalogo (fid, pid, costo) VALUES (?, ?, ?)");
+    try {
+        $stmt->execute([$data['fid'], $data['pid'], $data['costo']]);
+        $response->getBody()->write(json_encode(["success" => true]));
+    } catch (PDOException $e) {
+        $response->getBody()->write(json_encode(["success" => false, "error" => "Errore di inserimento (chiavi duplicate?)"]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/product', function ($request, $response) use ($pdo) {
+    $stmt = $pdo->query("SELECT * FROM pezzi");
+    $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $response->getBody()->write(json_encode(["success" => true, "data" => $data]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->post('/api/product', function ($request, $response) use ($pdo) {
+    $data = $request->getParsedBody();
+    $stmt = $pdo->prepare("INSERT INTO pezzi (pnome, colore) VALUES (?, ?)");
+    try {
+        $stmt->execute([$data['pnome'], $data['colore']]);
+        
+        // AGGIUNTA FONDAMENTALE: Restituisce l'ID generato automaticamente
+        $newId = $pdo->lastInsertId();
+        $response->getBody()->write(json_encode(["success" => true, "pid" => $newId]));
+        
+    } catch (PDOException $e) {
+        $response->getBody()->write(json_encode(["success" => false, "error" => $e->getMessage()]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/product/{id}', function ($request, $response, $args) use ($pdo) {
+    $stmt = $pdo->prepare("SELECT * FROM pezzi WHERE pid = :id");
+    $stmt->execute(['id' => $args['id']]);
+    $data = $stmt->fetch();
+
+    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Product not found"];
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->put('/api/product/{id}', function ($request, $response, $args) use ($pdo) {
+    $data = $request->getParsedBody();
+    $stmt = $pdo->prepare("UPDATE pezzi SET pnome = ?, colore = ? WHERE pid = ?");
+    $stmt->execute([$data['pnome'], $data['colore'], $args['id']]);
+    $response->getBody()->write(json_encode(["success" => true]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->delete('/api/product/{id}', function ($request, $response, $args) use ($pdo) {
+    try {
+        // Iniziamo la transazione: da qui in poi, o tutto o niente
+        $pdo->beginTransaction();
+
+        // 1. Prima eliminiamo tutti i riferimenti nel catalogo (le dipendenze)
+        $stmtCatalogo = $pdo->prepare("DELETE FROM catalogo WHERE pid = ?");
+        $stmtCatalogo->execute([$args['id']]);
+
+        // 2. Poi eliminiamo il pezzo vero e proprio dall'anagrafica
+        $stmtPezzo = $pdo->prepare("DELETE FROM pezzi WHERE pid = ?");
+        $stmtPezzo->execute([$args['id']]);
+
+        // Confermiamo le modifiche al database
+        $pdo->commit();
+        
+        $response->getBody()->write(json_encode(["success" => true]));
+    } catch (PDOException $e) {
+        // Se qualcosa va storto, annulliamo tutto
+        $pdo->rollBack();
+        $response->getBody()->write(json_encode(["success" => false, "error" => "Errore di eliminazione: " . $e->getMessage()]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/supplier', function ($request, $response) use ($pdo) {
+    $stmt = $pdo->query("SELECT * FROM fornitori");
+    $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $response->getBody()->write(json_encode(["success" => true, "data" => $data]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->post('/api/supplier', function ($request, $response) use ($pdo) {
+    $data = $request->getParsedBody();
+    
+    // Rimosso il 'fid' dalla query, ci pensa il database!
+    $stmt = $pdo->prepare("INSERT INTO fornitori (fnome, indirizzo) VALUES (?, ?)");
+    try {
+        $stmt->execute([$data['fnome'], $data['indirizzo']]);
+        
+        // Restituiamo il nuovo ID creato per sicurezza
+        $newId = $pdo->lastInsertId();
+        $response->getBody()->write(json_encode(["success" => true, "fid" => $newId]));
+        
+    } catch (PDOException $e) {
+        $response->getBody()->write(json_encode(["success" => false, "error" => $e->getMessage()]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/supplier/{id}', function ($request, $response, $args) use ($pdo) {
+    $stmt = $pdo->prepare("SELECT * FROM fornitori WHERE fid = :id");
+    $stmt->execute(['id' => $args['id']]);
+    $data = $stmt->fetch();
+    
+    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Supplier not found"];
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->put('/api/supplier/{fid}', function ($request, $response, $args) use ($pdo) {
+    $data = $request->getParsedBody();
+    $stmt = $pdo->prepare("UPDATE fornitori SET fnome = ?, indirizzo = ? WHERE fid = ?");
+    $stmt->execute([$data['fnome'], $data['indirizzo'], $args['fid']]);
+    $response->getBody()->write(json_encode(["success" => true]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->delete('/api/supplier/{id}', function ($request, $response, $args) use ($pdo) {
+    try {
+        $pdo->beginTransaction();
+
+        // 1. Prima eliminiamo i suoi prodotti in vendita
+        $stmtCatalogo = $pdo->prepare("DELETE FROM catalogo WHERE fid = ?");
+        $stmtCatalogo->execute([$args['id']]);
+
+        // 2. Poi eliminiamo l'azienda dall'anagrafica
+        $stmtFornitore = $pdo->prepare("DELETE FROM fornitori WHERE fid = ?");
+        $stmtFornitore->execute([$args['id']]);
+
+        $pdo->commit();
+        
+        $response->getBody()->write(json_encode(["success" => true]));
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        $response->getBody()->write(json_encode(["success" => false, "error" => "Errore di eliminazione: " . $e->getMessage()]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->post('/api/auth/verify', function ($request, $response) use ($pdo) {
+    $params = $request->getParsedBody();
+    $user = $params['username'] ?? '';
+    $pass = $params['password'] ?? '';
+
+    $stmt = $pdo->prepare("SELECT uid, username, ruolo, fid FROM utenti WHERE username = ? AND password = ?");
+    $stmt->execute([$user, $pass]);
+    $userData = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $result = $userData ? ["success" => true, "data" => $userData] : ["success" => false, "error" => "No user found"];
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// --- MODIFICA (PUT) ---
+$app->put('/api/catalogo/{fid}/{pid}', function ($request, $response, $args) use ($pdo) {
+    $data = $request->getParsedBody();
+    // Aggiorniamo solo il costo, fid e pid sono le chiavi primarie
+    $stmt = $pdo->prepare("UPDATE catalogo SET costo = ? WHERE fid = ? AND pid = ?");
+    $stmt->execute([$data['costo'], $args['fid'], $args['pid']]);
+    
+    // Controlliamo se ha modificato davvero qualcosa
+    if ($stmt->rowCount() > 0) {
+        $response->getBody()->write(json_encode(["success" => true]));
+    } else {
+        $response->getBody()->write(json_encode(["success" => false, "error" => "Nessuna modifica effettuata o record non trovato"]));
+    }
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// --- ELIMINA (DELETE) ---
+$app->delete('/api/catalogo/{fid}/{pid}', function ($request, $response, $args) use ($pdo) {
+    $stmt = $pdo->prepare("DELETE FROM catalogo WHERE fid = ? AND pid = ?");
+    $stmt->execute([$args['fid'], $args['pid']]);
+    $response->getBody()->write(json_encode(["success" => true]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
 $app->get('/api/{id}', function (Request $request, Response $response, array $args) use ($pdo, $queries) {
     $id = (int) $args['id'];
 
@@ -128,26 +340,6 @@ $app->get('/api/{id}', function (Request $request, Response $response, array $ar
 
     $response->getBody()->write(json_encode($result, JSON_PRETTY_PRINT));
     return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
-});
-
-$app->get('/api/product/{id}', function ($request, $response, $args) use ($pdo) {
-    $stmt = $pdo->prepare("SELECT * FROM pezzi WHERE pid = :id");
-    $stmt->execute(['id' => $args['id']]);
-    $data = $stmt->fetch();
-
-    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Product not found"];
-    $response->getBody()->write(json_encode($result));
-    return $response->withHeader('Content-Type', 'application/json');
-});
-
-$app->get('/api/supplier/{id}', function ($request, $response, $args) use ($pdo) {
-    $stmt = $pdo->prepare("SELECT * FROM fornitori WHERE fid = :id");
-    $stmt->execute(['id' => $args['id']]);
-    $data = $stmt->fetch();
-    
-    $result = $data ? ["success" => true, "data" => $data] : ["success" => false, "error" => "Fornitore non trovato"];
-    $response->getBody()->write(json_encode($result));
-    return $response->withHeader('Content-Type', 'application/json');
 });
 
 $app->run();

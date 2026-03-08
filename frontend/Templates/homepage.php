@@ -11,6 +11,14 @@
         </style>
     </head>
     <body class="bg-light">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+            <div class="container">
+                <a class="navbar-brand fw-bold" href="#">📦 SupplySystem</a>
+                <div class="navbar-nav ms-auto">
+                    <a class="btn btn-outline-light btn-sm" href="/esercizioFornitoriSlim/frontend/login">Accedi Area Gestione</a>
+                </div>
+            </div>
+        </nav>
         <div class="container py-5">
             <div class="row mb-4 text-center">
                 <div class="col">
